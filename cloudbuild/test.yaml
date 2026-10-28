@@ -13,8 +13,9 @@ steps:
         echo "== typecheck"; npm run typecheck
         echo "== unit"; npm test
         echo "== pack"; npm pack
-        tar -tzf n8n-nodes-grades-*.tgz | grep -q package/dist/nodes/GradesTrigger/GradesTrigger.node.js
-        tar -tzf n8n-nodes-grades-*.tgz | grep -q package/dist/nodes/Grades/grades.svg
+        tar -tzf n8n-nodes-grades-*.tgz > /tmp/files.txt
+        grep -q package/dist/nodes/GradesTrigger/GradesTrigger.node.js /tmp/files.txt
+        grep -q package/dist/nodes/Grades/grades.svg /tmp/files.txt
         echo "CI passed"
 
 serviceAccount: projects/grades-prod/serviceAccounts/grades-cloudbuild@grades-prod.iam.gserviceaccount.com
