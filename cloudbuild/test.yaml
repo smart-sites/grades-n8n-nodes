@@ -1,0 +1,25 @@
+# CI on Google Cloud Build (GitHub Actions is off in the smart-sites org): typecheck, unit tests (mocked n8n context, no
+# network), build and `npm pack` (what `npm publish` would upload). Submit with bin/ci-cloud.sh <branch|sha|worktree dir>.
+steps:
+  - id: checks
+    name: mirror.gcr.io/library/node:22
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -euo pipefail
+        node --version
+        npm ci --no-audit --no-fund
+        echo "== typecheck"; npm run typecheck
+        echo "== unit"; npm test
+        echo "== pack"; npm pack
+        tar -tzf n8n-nodes-grades-*.tgz | grep -q package/dist/nodes/GradesTrigger/GradesTrigger.node.js
+        tar -tzf n8n-nodes-grades-*.tgz | grep -q package/dist/nodes/Grades/grades.svg
+        echo "CI passed"
+
+serviceAccount: projects/grades-prod/serviceAccounts/grades-cloudbuild@grades-prod.iam.gserviceaccount.com
+logsBucket: gs://grades-prod-cloudbuild/logs
+timeout: 900s
+tags: [grades, n8n, ci]
+options:
+  substitutionOption: ALLOW_LOOSE
