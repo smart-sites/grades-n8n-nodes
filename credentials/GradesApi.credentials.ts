@@ -22,7 +22,7 @@ export class GradesApi implements ICredentialType {
       default: '',
       required: true,
       description:
-        'In the Grades.com dashboard open Connect your AI > API keys and create a key with reviews:read, reviews:write and companies:read (it starts with gk_live_)',
+        'Get a key at https://my.grades.com/connect?connect=n8n (it creates a key with reviews:read, reviews:write and companies:read for n8n) and paste it here (it starts with gk_live_)',
     },
     {
       displayName: 'API URL',
