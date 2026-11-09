@@ -22,6 +22,26 @@ each node has a **Business** dropdown.
 
 Plans: the trigger needs Pro or Premium (webhooks); review requests need Premium.
 
+## Authentication
+
+1. Open https://my.grades.com/connect?connect=n8n (sign in if asked).
+2. Click **Create key**: the key is named "n8n" and gets `reviews:read`, `reviews:write` and `companies:read`.
+3. In n8n add a credential **Grades.com API** and paste the key (starts with `gk_live_`, shown once).
+
+The credential test calls `GET https://app.grades.com/api/v1/me`. API reference: https://app.grades.com/api/documentation.
+
+## Example workflows
+
+- **Alert Slack about 1- and 2-star reviews:** Grades.com Trigger (Review Created) > IF `rating <= 2` > Slack > Send Message
+  with the author, the rating and the text.
+- **Approve the review agent's drafts from Slack:** Grades.com Trigger (Agent Action Pending) > Slack message with the
+  draft and two buttons > Grades.com > Agent Action > Approve (or Reject with the reason).
+- **Ask for a review when a job is closed:** your CRM or Webhook node (job closed) > Grades.com > Contact > Create or
+  Update > Grades.com > Review Request > Send, with the job id as the reference (a retried run never sends twice).
+- **Weekly review digest:** Schedule Trigger (Monday 8:00) > Grades.com > Review > Get Many (Published After = 7 days
+  ago) > an LLM summary > Gmail.
+- **Log every review to Google Sheets:** Grades.com Trigger (Review Created) > Google Sheets > Append Row.
+
 ## Grades.com in n8n's AI agents today (remote MCP)
 
 No install needed: n8n's **MCP Client Tool** node (AI Agent > Tools) can use the Grades.com MCP server directly.
@@ -46,20 +66,21 @@ Local n8n: `npm run build && npm link`, then in `~/.n8n/custom` `npm link n8n-no
 CI runs on Google Cloud Build like the other Grades.com repos (GitHub Actions is off in the org):
 `bin/ci-cloud.sh <branch|sha|worktree dir>` -> `cloudbuild/test.yaml` -> PASS/FAIL.
 
-API reference: app.grades.com `www/docs/integrations.md` (webhook events, REST hooks, samples) and `www/docs/api-v1.md`.
+API reference: https://app.grades.com/api/documentation (webhook events: `GET /api/v1/webhooks/events`).
 
 ## Publishing (Mike)
 
-Agents never publish. With the npm account that should own the package (e.g. `support@grades.com`, 2FA on):
+Agents never publish. 1.0.0 was published by hand (no provenance). From 1.0.1 on, publish from GitHub Actions with npm
+provenance, which n8n requires for verified community nodes:
 
-```bash
-npm login
-npm ci && npm test
-npm publish --access public
-```
+1. Make `smart-sites/grades-n8n-nodes` public and allow GitHub Actions for this repository.
+2. npmjs.com > `n8n-nodes-grades` > Settings > Trusted Publishers > GitHub Actions: owner `smart-sites`, repository
+   `grades-n8n-nodes`, workflow `publish.yml`.
+3. `git tag v1.0.1 && git push origin v1.0.1`: `.github/workflows/publish.yml` tests and runs
+   `npm publish --provenance --access public`.
+4. `npx @n8n/scan-community-package n8n-nodes-grades` must pass (it checks provenance, then lints the attested source and
+   the tarball), then submit the node in the n8n Creator Portal (<https://creators.n8n.io/nodes>).
 
-(`prepack` builds `dist/` first.) For an update: bump `version` in `package.json`, then the same `npm publish`.
-
-Then, optionally, ask n8n to verify the node (verified community nodes show up in n8n Cloud's node panel): the n8n
-Creator Portal (<https://creators.n8n.io>) > submit `n8n-nodes-grades`. n8n's rules: MIT license (done), no runtime
-dependencies (done), the `n8n-community-node-package` keyword (done), README with usage (this file).
+n8n's rules: MIT license, no runtime dependencies, the `n8n-community-node-package` keyword, public repository,
+provenance, English only, no environment or file access, scanner passes, README with usage, authentication and example
+workflows (this file).

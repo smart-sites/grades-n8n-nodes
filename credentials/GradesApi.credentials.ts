@@ -11,7 +11,7 @@ export class GradesApi implements ICredentialType {
 
   documentationUrl = 'https://www.grades.com/developers#integrations';
 
-  icon = 'file:grades.svg' as const;
+  icon = { light: 'file:grades.svg', dark: 'file:grades.dark.svg' } as const;
 
   properties: INodeProperties[] = [
     {

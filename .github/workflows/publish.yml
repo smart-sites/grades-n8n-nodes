@@ -1,0 +1,29 @@
+# Publishes n8n-nodes-grades to npm with a provenance statement when a tag like v1.0.1 is pushed (n8n requires
+# provenance for verified community nodes since 2026-05-01). Runs only once the repo is public and Actions are allowed
+# for this repo; auth is the npm Trusted Publisher (npmjs.com > n8n-nodes-grades > Settings > Trusted Publishers >
+# GitHub Actions: owner smart-sites, repository grades-n8n-nodes, workflow publish.yml). No NPM_TOKEN.
+name: Publish to npm
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: 'https://registry.npmjs.org'
+      - run: npm install -g npm@latest        # trusted publishing needs npm >= 11.5.1
+      - run: npm ci
+      - run: npm test
+      - run: npm run typecheck
+      - run: npm publish --provenance --access public
