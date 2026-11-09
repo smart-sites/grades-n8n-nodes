@@ -48,5 +48,24 @@ export class GradesApi implements ICredentialType {
       baseURL: '={{$credentials.baseUrl}}',
       url: '/me',
     },
+    // Shown in the credential dialog instead of n8n's "Authorization failed - please check your credentials".
+    rules: [
+      {
+        type: 'responseCode',
+        properties: {
+          value: 401,
+          message:
+            'Grades.com did not accept this API key: it was revoked, has expired or was mistyped (keys start with gk_live_; a ' +
+            'publishable gk_pub_ key only works for website widgets). Create a new key at https://my.grades.com/connect?connect=n8n and paste it here.',
+        },
+      },
+      {
+        type: 'responseCode',
+        properties: {
+          value: 429,
+          message: 'Grades.com is receiving too many requests from this API key right now. Wait a minute and test again.',
+        },
+      },
+    ],
   };
 }

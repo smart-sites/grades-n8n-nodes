@@ -14,7 +14,11 @@ function context(params: Record<string, unknown>, responses: unknown[] = [{ data
   const calls: Call[] = [];
   const request = vi.fn(async (_type: string, options: Call) => {
     calls.push(options);
-    return responses.shift();
+    const next = responses.shift() as { __throw?: unknown } | undefined;
+    if (next && next.__throw) {
+      throw next.__throw;
+    }
+    return next;
   });
   const ctx = {
     calls,
@@ -108,7 +112,7 @@ describe('Grades.com node', () => {
     });
   });
 
-  it('creates or updates a contact with tags and SMS consent', async () => {
+  it('creates or updates a contact with tags', async () => {
     const ctx = context(
       {
         resource: 'contact',
@@ -117,18 +121,33 @@ describe('Grades.com node', () => {
         name: 'Maria Lopez',
         email: '',
         phone: '201 555 0100',
-        additionalFields: { tags: 'vip, cleaning', sms_consent: true, sms_consent_source: 'booking form' },
+        additionalFields: { tags: 'vip, cleaning' },
       },
       [{ data: { id: 'c1' } }],
     );
     await node.execute.call(ctx as never);
-    expect(ctx.calls[0].body).toEqual({
-      name: 'Maria Lopez',
+    expect(ctx.calls[0].body).toEqual({ name: 'Maria Lopez', phone: '201 555 0100', tags: ['vip', 'cleaning'] });
+  });
+
+  it('refuses SMS consent without the consent wording, and a contact without email or phone, before calling the API', async () => {
+    const sms = context({
+      resource: 'contact',
+      operation: 'upsert',
+      company: COMPANY,
       phone: '201 555 0100',
-      tags: ['vip', 'cleaning'],
-      sms_consent: true,
-      sms_consent_source: 'booking form',
+      additionalFields: { sms_consent: true, sms_consent_source: 'booking form' },
     });
+    await expect(node.execute.call(sms as never)).rejects.toThrow(
+      'Customer Agreed to Texts needs the exact consent wording the customer agreed to, which this node cannot send yet ' +
+        '(Grades.com text messages are not live). Turn Customer Agreed to Texts off and run again.',
+    );
+    expect(sms.calls).toHaveLength(0);
+
+    for (const resource of ['contact', 'reviewRequest']) {
+      const ctx = context({ resource, operation: resource === 'contact' ? 'upsert' : 'send', company: COMPANY, name: 'Maria', email: ' ', phone: '' });
+      await expect(node.execute.call(ctx as never)).rejects.toThrow('An email or a phone is required: fill in Email or Phone.');
+      expect(ctx.calls).toHaveLength(0);
+    }
   });
 
   it('loads the businesses for the dropdown', async () => {
@@ -225,5 +244,158 @@ describe('helpers', () => {
     expect(itemsOf({ id: 'e', type: 'review.created', created_at: 'x', company: {}, data: { review: { uuid: 'r' } } })).toEqual([
       { id: 'e', event: 'review.created', created_at: 'x', company: {}, review: { uuid: 'r' } },
     ]);
+  });
+});
+
+/** A rejected HTTP call the way n8n's helper throws it (axios: response.data; legacy request: response.body). */
+function httpError(status: number, body: unknown, headers: Record<string, string> = {}, legacy = false) {
+  const error = Object.assign(new Error(`Request failed with status code ${status}`), {
+    response: legacy ? { statusCode: status, body, headers } : { status, data: body, headers },
+  });
+  return { __throw: error };
+}
+
+describe('customer-facing errors (every failure a customer can hit)', () => {
+  const node = new Grades();
+  const reply = { resource: 'review', operation: 'reply', company: COMPANY, review: 'r1', text: 'Thanks!', publish: true, replace: false };
+
+  async function messageOf(params: Record<string, unknown>, failure: unknown, apiKey = 'gk_live_test') {
+    const ctx = context(params, [failure]);
+    ctx.getCredentials = async () => ({ apiKey, baseUrl: 'https://app.grades.com/api/v1' });
+    try {
+      await node.execute.call(ctx as never);
+    } catch (error) {
+      const err = error as { message: string; description?: string; httpCode?: string | null };
+      return { message: err.message, description: err.description, httpCode: err.httpCode };
+    }
+    throw new Error('expected the node to fail');
+  }
+
+  it('a revoked key, a mistyped key and a publishable key', async () => {
+    const revoked = await messageOf(reply, httpError(401, { title: 'Unauthorized', status: 401, detail: 'Authentication required.' }));
+    expect(revoked).toEqual({
+      message:
+        'Grades.com did not accept your API key: it was revoked, has expired or was mistyped. Create a new key at ' +
+        'https://my.grades.com/connect?connect=n8n and reconnect Grades.com in n8n.',
+      description: 'Grades.com answered HTTP 401.',
+      httpCode: '401',
+    });
+    const typo = await messageOf(reply, httpError(401, { status: 401 }), 'gk_lve_abc');
+    expect(typo.message).toMatch(/^This does not look like a Grades\.com API key: they start with gk_live_/);
+    expect(typo.message).not.toContain('gk_lve_abc');
+    const pub = await messageOf(reply, httpError(401, { status: 401 }), 'gk_pub_abc');
+    expect(pub.message).toMatch(/^This is a publishable key \(gk_pub_\.\.\.\)/);
+  });
+
+  it('a read-only key (missing scope), and a 403 that is not about scopes', async () => {
+    const scope = await messageOf(
+      reply,
+      httpError(403, { status: 403, detail: 'This credential is missing the required scope: reviews:write.', required_scopes: ['reviews:write'] }),
+    );
+    expect(scope.message).toBe(
+      "Your Grades.com API key is not allowed to do this: it is missing the reviews:write permission (a read-only key can't " +
+        'reply, send requests or start triggers). Create a key with reviews:read, reviews:write and companies:read at ' +
+        'https://my.grades.com/connect?connect=n8n and reconnect Grades.com in n8n.',
+    );
+    const ai = await messageOf(reply, httpError(403, { status: 403, detail: 'AI reply generation is disabled' }));
+    expect(ai.message).toBe(
+      'AI reply generation is disabled. Turn AI replies on for this business in my.grades.com (review agent settings), or remove this step.',
+    );
+  });
+
+  it('rate limit 429 (with Retry-After, legacy response shape) and a monthly limit', async () => {
+    const rate = await messageOf(reply, httpError(429, { status: 429, detail: 'Too Many Attempts.' }, { 'Retry-After': '46' }, true));
+    expect(rate.message).toBe(
+      'Grades.com is receiving too many requests from this API key right now (the limit is 120 a minute). n8n can try ' +
+        'again in 46 seconds; if this keeps happening, spread out the runs that use this key.',
+    );
+    const monthly = await messageOf(reply, httpError(429, { status: 429, detail: "This month's AI drafts are used up." }));
+    expect(monthly.message).toBe("This month's AI drafts are used up. Try again later.");
+  });
+
+  it('plan gating: a trigger below Pro, Send Review Request below Premium, a lapsed subscription', async () => {
+    const trigger = new GradesTrigger();
+    const hook = context({ company: COMPANY, events: ['review.created'] }, [
+      httpError(402, {
+        status: 402,
+        code: 'plan_upgrade_required',
+        detail: 'Webhooks is not included in the Starter plan.',
+        plan_required: { required_plan_name: 'Pro', upgrade_url: 'https://my.grades.com/billing?plan=pro' },
+      }),
+    ]);
+    await expect(trigger.webhookMethods.default.create.call(hook as never)).rejects.toThrow(
+      'Webhooks is not included in the Starter plan. Upgrade the business to the Pro plan at https://my.grades.com/billing?plan=pro, then try again.',
+    );
+
+    const send = await messageOf(
+      { resource: 'reviewRequest', operation: 'send', company: COMPANY, email: 'm@example.com' },
+      httpError(402, { status: 402, code: 'plan_upgrade_required', detail: 'Review requests is not included in the Pro plan.', required_plan_name: 'Premium' }),
+    );
+    expect(send.message).toBe(
+      'Review requests is not included in the Pro plan. Upgrade the business to the Premium plan at https://my.grades.com/billing, then try again.',
+    );
+    const locked = await messageOf(reply, httpError(402, { status: 402, code: 'billing_locked', detail: 'This location is locked.' }));
+    expect(locked.message).toBe('This location is locked. Update the payment details at https://my.grades.com/billing to turn changes back on.');
+  });
+
+  it('an empty account: the Business dropdowns say why they are empty', async () => {
+    const ctx = context({}, [{ data: [] }, { data: [] }]);
+    await expect(node.methods.loadOptions.getCompanies.call(ctx as never)).rejects.toThrow(
+      'Your Grades.com API key does not reach any business yet. Add or claim your business at https://my.grades.com',
+    );
+    await expect(new GradesTrigger().methods.loadOptions.getCompanies.call(ctx as never)).rejects.toThrow('does not reach any business yet');
+  });
+
+  it('outages: 500, an HTML 503, and a timeout', async () => {
+    const crash = await messageOf(reply, httpError(500, { status: 500, detail: 'Server Error' }));
+    expect(crash.message).toBe(
+      'Grades.com had a problem on its side (HTTP 500). Nothing is wrong with your n8n setup: try again in a few minutes. ' +
+        'If it keeps happening, email support@grades.com.',
+    );
+    const html = await messageOf(reply, httpError(503, '<html>upstream connect error</html>'));
+    expect(html.message).toMatch(/^Grades\.com is temporarily unavailable \(HTTP 503\)\./);
+    const timeout = await messageOf(reply, { __throw: Object.assign(new Error('timeout of 300000ms exceeded'), { code: 'ECONNABORTED' }) });
+    expect(timeout).toEqual({
+      message:
+        'Could not reach Grades.com (the connection failed or timed out). This is usually temporary: try again in a few ' +
+        'minutes. If it keeps happening, email support@grades.com.',
+      description: 'No answer from Grades.com (ECONNABORTED).',
+      httpCode: null,
+    });
+  });
+
+  it('deleted resources and validation errors', async () => {
+    const review = await messageOf(reply, httpError(404, { status: 404, detail: 'Review not found' }));
+    expect(review.message).toBe(
+      'Grades.com could not find this review. It may have been deleted, or it belongs to another business: check the Review ID and the Business.',
+    );
+    const decided = await messageOf(
+      { resource: 'agentAction', operation: 'approve', company: COMPANY, action: 'a1', text: '' },
+      httpError(409, { status: 409, detail: 'This action is no longer pending.' }),
+    );
+    expect(decided.message).toBe('This action is no longer pending. Pick a draft that is still waiting for approval.');
+    const invalid = await messageOf(
+      { resource: 'review', operation: 'getAll', company: COMPANY, filters: { max_rating: 9 }, limit: 10 },
+      httpError(400, { status: 400, detail: 'Validate Error', errors: { 'query.max_rating': ['The value must be less than or equal to 5.'] } }),
+    );
+    expect(invalid.message).toBe(
+      'Grades.com did not accept the input of this step. Check the "Maximum Rating" field: The value must be less than or equal to 5.',
+    );
+    const missing = context({ resource: 'review', operation: 'get', company: COMPANY, review: '' });
+    await expect(node.execute.call(missing as never)).rejects.toThrow('The "Review ID" field is empty. Choose or map a value for it and try again.');
+  });
+
+  it('never shows raw JSON, the key or n8n\'s generic status texts', async () => {
+    for (const status of [400, 401, 402, 403, 404, 409, 422, 429, 500, 502, 503, 504]) {
+      const error = await messageOf(reply, httpError(status, { status, detail: '{"raw":"json"}', errors: { 'body.x': ['{"a":1}'] } }));
+      expect(error.message, `HTTP ${status}`).not.toMatch(/[{}]|gk_live_test|Bearer|please check|perhaps/);
+      expect(error.description, `HTTP ${status}`).toBe(`Grades.com answered HTTP ${status}.`);
+    }
+  });
+
+  it('the credential test explains a 401', () => {
+    const rules = new GradesApi().test.rules ?? [];
+    const unauthorized = rules.find((rule) => rule.type === 'responseCode' && rule.properties.value === 401);
+    expect(String(unauthorized?.properties.message)).toContain('https://my.grades.com/connect?connect=n8n');
   });
 });
