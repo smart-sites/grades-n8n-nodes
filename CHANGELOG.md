@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+- Launch gate L2 / L8 (workspace docs/integration-launch-gate-live-2026-11-09.md, same texts as grades-zapier): a key
+  limited to some businesses refused on webhooks (the app's 404 "... only some of your businesses ..." or its new 400
+  `company_required`) now reads "This key is limited to some businesses. Triggers need the business named, or create a
+  key for all businesses at my.grades.com/connect?connect=n8n." instead of "Check the IDs you mapped"; a 404 on
+  `POST /webhooks` / `/webhooks/samples` names the business. "(a read-only key can't reply, send requests or start
+  triggers)" is added only when the missing scope is `reviews:write`. Not published.
+
 - Customer-facing errors (`nodes/Grades/errors.ts`, same texts as the Zapier app): every failed call says what happened and
   what to do next instead of "Unauthorized: Authentication required." or n8n's generic "Forbidden - perhaps check your
   credentials?". Covered: revoked / mistyped key (and a `gk_pub_` or non-`gk_live_` key), a key missing a scope
