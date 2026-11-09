@@ -84,9 +84,29 @@ function missingScopes(problem: Record<string, unknown>, detail: string, wwwAuth
   return /\bscope\b/i.test(detail) ? 'needed' : null;
 }
 
+/**
+ * A key (or app connection) limited to some businesses was refused: the app's 404 "... approved for only some of your
+ * businesses ..." (webhooks on older app versions) or its 400 `company_required` "This key is limited to some businesses ..."
+ * (a webhook without a business).
+ */
+const RESTRICTED_DETAIL = /limited to some (of your )?businesses|only some of your businesses/i;
+
+export function restrictedKeyMessage(ctx: ProblemContext): string {
+  return (
+    'This key is limited to some businesses. Triggers need the business named, or create a key for all businesses at ' +
+    `${ctx.connectUrl}.`
+  );
+}
+
 /** What a 404 is about, from the request path. */
 function notFound(ctx: ProblemContext): string {
   const path = (ctx.url ?? '').split('?')[0];
+  if (/\/webhooks(\/samples)?$/.test(path)) {
+    return (
+      'Grades.com could not find this business, or your API key cannot reach it (a key limited to some businesses ' +
+      `reaches only those). Pick the business again from the Business list, or create a key for all businesses at ${ctx.connectUrl}.`
+    );
+  }
   if (/\/webhooks\/(?!samples|events)[^/]+$/.test(path)) {
     return (
       'This Grades.com webhook no longer exists (it was deleted in Grades.com, or the API key that made it was removed). ' +
@@ -125,6 +145,10 @@ export function problemMessage(status: number, body: unknown, ctx: ProblemContex
   const code = typeof problem.code === 'string' ? problem.code : '';
   const newKey = `Create a new key at ${ctx.connectUrl} and reconnect Grades.com in ${ctx.app}.`;
 
+  if ((status === 404 || status === 400) && (code === 'company_required' || RESTRICTED_DETAIL.test(rawDetail))) {
+    return restrictedKeyMessage(ctx);
+  }
+
   if (status === 401) {
     const key = (ctx.apiKey ?? '').trim();
     let what = 'Grades.com did not accept your API key: it was revoked, has expired or was mistyped.';
@@ -143,10 +167,11 @@ export function problemMessage(status: number, body: unknown, ctx: ProblemContex
     const scopes = missingScopes(problem, rawDetail, wwwAuthenticate);
     if (scopes !== null) {
       const which = scopes === 'needed' ? 'a permission it needs' : `the ${scopes} permission`;
+      // Only a missing write scope is what a read-only key lacks.
+      const readOnly = /reviews:write/.test(scopes) ? " (a read-only key can't reply, send requests or start triggers)" : '';
       return (
-        `Your Grades.com API key is not allowed to do this: it is missing ${which} (a read-only key can't reply, ` +
-        `send requests or start triggers). Create a key with ${SCOPES_TEXT} at ${ctx.connectUrl} and reconnect ` +
-        `Grades.com in ${ctx.app}.`
+        `Your Grades.com API key is not allowed to do this: it is missing ${which}${readOnly}. Create a key with ` +
+        `${SCOPES_TEXT} at ${ctx.connectUrl} and reconnect Grades.com in ${ctx.app}.`
       );
     }
     if (/\bAI\b.*\b(repl|draft)/i.test(rawDetail)) {

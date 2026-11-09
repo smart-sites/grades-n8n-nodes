@@ -355,6 +355,38 @@ describe('customer-facing errors (every failure a customer can hit)', () => {
     );
   });
 
+  // Launch gate L2 / L8 (workspace docs/integration-launch-gate-live-2026-11-09.md).
+  it('a business-limited key on the trigger, and a missing read scope without the read-only note', async () => {
+    const restricted =
+      'This key is limited to some businesses. Triggers need the business named, or create a key for all businesses at ' +
+      'https://my.grades.com/connect?connect=n8n.';
+    const trigger = new GradesTrigger();
+    const older = context({ company: COMPANY, events: ['review.created'] }, [
+      httpError(404, {
+        status: 404,
+        detail:
+          'This app connection was approved for only some of your businesses, so it cannot use the agency area or webhooks. ' +
+          'To use them, reconnect the app and choose All my businesses on the approval screen.',
+      }),
+    ]);
+    await expect(trigger.webhookMethods.default.create.call(older as never)).rejects.toThrow(restricted);
+    const noCompany = context({ company: COMPANY, events: ['review.created'] }, [
+      httpError(400, {
+        status: 400,
+        code: 'company_required',
+        detail: 'This key is limited to some businesses, so a webhook must name one of them in `company`.',
+      }),
+    ]);
+    await expect(trigger.webhookMethods.default.create.call(noCompany as never)).rejects.toThrow(restricted);
+
+    const read = await messageOf(reply, httpError(403, { status: 403, detail: 'This credential is missing the required scope: companies:read.' }));
+    expect(read.message).toBe(
+      'Your Grades.com API key is not allowed to do this: it is missing the companies:read permission. Create a key with ' +
+        'reviews:read, reviews:write and companies:read at https://my.grades.com/connect?connect=n8n and reconnect ' +
+        'Grades.com in n8n.',
+    );
+  });
+
   it('rate limit 429 (with Retry-After, legacy response shape) and a monthly limit', async () => {
     const rate = await messageOf(reply, httpError(429, { status: 429, detail: 'Too Many Attempts.' }, { 'Retry-After': '46' }, true));
     expect(rate.message).toBe(
