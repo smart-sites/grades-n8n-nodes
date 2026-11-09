@@ -7,7 +7,7 @@ import type {
   INodeType,
   INodeTypeDescription,
 } from 'n8n-workflow';
-import { NodeConnectionTypes } from 'n8n-workflow';
+import { NodeApiError, NodeConnectionTypes, NodeOperationError } from 'n8n-workflow';
 import { compact, gradesRequest, path } from './transport';
 
 const company = {
@@ -31,7 +31,7 @@ export class Grades implements INodeType {
   description: INodeTypeDescription = {
     displayName: 'Grades.com',
     name: 'grades',
-    icon: 'file:grades.svg',
+    icon: { light: 'file:grades.svg', dark: 'file:grades.dark.svg' },
     group: ['transform'],
     version: 1,
     subtitle: '={{$parameter["operation"] + ": " + $parameter["resource"]}}',
@@ -147,12 +147,12 @@ export class Grades implements INodeType {
         default: {},
         ...show('review', ['getAll']),
         options: [
-          { displayName: 'Text or Author', name: 's', type: 'string', default: '' },
-          { displayName: 'Minimum Rating', name: 'min_rating', type: 'number', typeOptions: { minValue: 1, maxValue: 5 }, default: 1 },
-          { displayName: 'Maximum Rating', name: 'max_rating', type: 'number', typeOptions: { minValue: 1, maxValue: 5 }, default: 5 },
-          { displayName: 'Sites', name: 'source_drivers', type: 'string', default: '', placeholder: 'google,yelp_apify' },
           { displayName: 'Has a Reply', name: 'has_company_response', type: 'boolean', default: false },
+          { displayName: 'Maximum Rating', name: 'max_rating', type: 'number', typeOptions: { minValue: 1, maxValue: 5 }, default: 5 },
+          { displayName: 'Minimum Rating', name: 'min_rating', type: 'number', typeOptions: { minValue: 1, maxValue: 5 }, default: 1 },
           { displayName: 'Published After', name: 'start_date', type: 'dateTime', default: '' },
+          { displayName: 'Sites', name: 'source_drivers', type: 'string', default: '', placeholder: 'google,yelp_apify' },
+          { displayName: 'Text or Author', name: 's', type: 'string', default: '' },
         ],
       },
       {
@@ -294,7 +294,7 @@ export class Grades implements INodeType {
           out.push({ json: { error: (error as Error).message }, pairedItem: { item: i } });
           continue;
         }
-        throw error;
+        throw error instanceof NodeApiError ? error : new NodeOperationError(this.getNode(), error as Error, { itemIndex: i });
       }
     }
 

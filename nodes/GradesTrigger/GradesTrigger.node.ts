@@ -36,7 +36,7 @@ export class GradesTrigger implements INodeType {
   description: INodeTypeDescription = {
     displayName: 'Grades.com Trigger',
     name: 'gradesTrigger',
-    icon: 'file:grades.svg',
+    icon: { light: 'file:grades.svg', dark: 'file:grades.dark.svg' },
     group: ['trigger'],
     version: 1,
     subtitle: '={{$parameter["events"].join(", ")}}',
@@ -112,8 +112,9 @@ export class GradesTrigger implements INodeType {
         if (data.webhookId) {
           try {
             await gradesRequest.call(this, 'DELETE', `/webhooks/${encodeURIComponent(String(data.webhookId))}`);
-          } catch {
-            // Already gone (deleted in Grades.com, or its API key was revoked): nothing to undo.
+          } catch (error) {
+            // Already gone (deleted in Grades.com, or its API key was revoked): nothing to undo, but say so in the log.
+            this.logger.warn(`Grades.com webhook ${String(data.webhookId)} could not be deleted: ${(error as Error).message}`);
           }
         }
         delete data.webhookId;
