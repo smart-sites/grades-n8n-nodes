@@ -11,6 +11,11 @@
   webhook URL when the workflow is activated, removes it when deactivated, and checks every delivery's
   `X-Grades-Signature`.
 
+Review fields: `site` is the review platform (google, yelp, facebook, bbb, direct, grades) and `source_name` its display
+name (Google, Yelp, Direct, Grades.com); `source` is an internal collector id (e.g. yelp_apify, google_maps) that may
+change, so build workflows on `site`. The **Sites** filter takes platforms (`google,yelp`). Review > Get and Get Many
+have a **Simplify** option: the platform first (`source_name`, `site`) and no `source`; off, the raw review is returned.
+
 ## Install (n8n users)
 
 Settings > Community Nodes > Install > `n8n-nodes-grades`. Self-hosted without the UI: `npm install n8n-nodes-grades` in

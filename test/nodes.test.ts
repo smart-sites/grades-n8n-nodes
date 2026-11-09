@@ -1,7 +1,7 @@
 import { createHmac } from 'crypto';
 import { describe, expect, it, vi } from 'vitest';
 import { GradesApi } from '../credentials/GradesApi.credentials';
-import { Grades } from '../nodes/Grades/Grades.node';
+import { Grades, simplifyReview } from '../nodes/Grades/Grades.node';
 import { compact, itemsOf, signatureValid } from '../nodes/Grades/transport';
 import { EVENTS, GradesTrigger } from '../nodes/GradesTrigger/GradesTrigger.node';
 
@@ -60,6 +60,58 @@ describe('Grades.com node', () => {
       url: `/companies/${COMPANY}/reviews`,
       qs: { max_rating: 2, limit: 10 },
     });
+  });
+
+  const REVIEW = {
+    uuid: 'r1',
+    source: 'yelp_apify',
+    source_name: 'Yelp',
+    site: 'yelp',
+    rating: 5,
+    text: 'Great visit',
+    author: 'Maria L.',
+    avatar: 'https://example.com/a.png',
+    published_at: '2026-11-01T12:00:00Z',
+    external_url: 'https://www.yelp.com/biz/x',
+    response_text: null,
+    response_date: null,
+  };
+
+  it('filters reviews by platform: the Sites help names platforms, not collector ids', () => {
+    const filters = node.description.properties.find((property) => property.name === 'filters');
+    const sites = (filters?.options as Array<{ name: string; placeholder?: string; description?: string }>).find(
+      (option) => option.name === 'source_drivers',
+    );
+    expect(sites?.placeholder).toBe('google,yelp');
+    expect(`${sites?.placeholder} ${sites?.description}`).not.toMatch(/apify|google_maps|_/);
+    expect(sites?.description).toContain('facebook');
+  });
+
+  it('keeps the raw review (source included) unless Simplify is on', async () => {
+    const ctx = context({ resource: 'review', operation: 'getAll', company: COMPANY, filters: { source_drivers: 'google,yelp' }, limit: 5 }, [
+      { data: [REVIEW] },
+    ]);
+    const [out] = await node.execute.call(ctx as never);
+    expect(out[0].json).toEqual(REVIEW);
+    expect(ctx.calls[0]).toMatchObject({ qs: { source_drivers: 'google,yelp', limit: 5 } });
+  });
+
+  it('simplified reviews put the platform first and drop the collector id', async () => {
+    const list = context({ resource: 'review', operation: 'getAll', company: COMPANY, filters: {}, limit: 5, simplify: true }, [
+      { data: [REVIEW] },
+    ]);
+    const [listed] = await node.execute.call(list as never);
+    expect(Object.keys(listed[0].json).slice(0, 2)).toEqual(['source_name', 'site']);
+    expect(listed[0].json).not.toHaveProperty('source');
+    expect(listed[0].json).not.toHaveProperty('avatar');
+    expect(listed[0].json).toMatchObject({ site: 'yelp', source_name: 'Yelp', uuid: 'r1', rating: 5, text: 'Great visit' });
+
+    const get = context({ resource: 'review', operation: 'get', company: COMPANY, review: 'r1', simplify: true }, [{ data: REVIEW }]);
+    const [got] = await node.execute.call(get as never);
+    expect(got[0].json).toEqual(listed[0].json);
+
+    // A row that carries site_name (review-request reviews, archive rows) leads with it.
+    expect(Object.keys(simplifyReview({ ...REVIEW, site_name: 'Yelp' })).slice(0, 3)).toEqual(['site_name', 'source_name', 'site']);
   });
 
   it('replies to a review', async () => {

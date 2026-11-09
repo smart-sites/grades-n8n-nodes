@@ -16,6 +16,13 @@
 
 ## [1.0.1] - staged, not published
 
+- Reviews (app v3.65.0 field meanings): `site` is the review platform (google, yelp, facebook, bbb, direct, grades),
+  `source_name` its display name, `source` an internal collector id that may change. The **Sites** filter placeholder is
+  `google,yelp` (was `google,yelp_apify`) and its help names platforms. New **Simplify** option on Review > Get and
+  Get Many (off by default, so the output is unchanged): the platform first (`site_name` when present, `source_name`,
+  `site`), then uuid, rating, author, text, dates, URL and reply; `source` and `avatar` dropped. The raw output keeps
+  `source`. README documents the fields.
+
 - n8n verification: passes the lint leg of `@n8n/scan-community-package` (Grades.com node: errors wrapped in
   `NodeOperationError` unless they already are a `NodeApiError`; review filters sorted by name; trigger: a failed webhook
   delete on deactivation is logged instead of swallowed silently; light and dark icons).
