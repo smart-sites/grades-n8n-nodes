@@ -1,14 +1,48 @@
 import { createHmac, timingSafeEqual } from 'crypto';
 import type { IDataObject, IExecuteFunctions, IHookFunctions, IHttpRequestMethods, ILoadOptionsFunctions, IWebhookFunctions } from 'n8n-workflow';
 import { NodeApiError } from 'n8n-workflow';
+import { isNetworkError, missingValueMessage, networkMessage, problemMessage } from './errors';
 
 export const DEFAULT_BASE_URL = 'https://app.grades.com/api/v1';
 
 type Context = IExecuteFunctions | ILoadOptionsFunctions | IHookFunctions | IWebhookFunctions;
 
+export const CONNECT_URL = 'https://my.grades.com/connect?connect=n8n';
+
+export const NO_BUSINESS =
+  'Your Grades.com API key does not reach any business yet. Add or claim your business at https://my.grades.com, ' +
+  'or use a credential with a key created by a member of the business.';
+
+/** API field names -> the n8n parameter names the customer sees, for 400 field errors. */
+export const FIELD_LABELS: Record<string, string> = {
+  name: 'Customer Name',
+  email: 'Email',
+  phone: 'Phone',
+  external_id: 'Customer ID',
+  campaign: 'Campaign Name or ID',
+  external_ref: 'Reference (Job or Invoice ID)',
+  delay_minutes: 'Delay (Minutes)',
+  tags: 'Tags',
+  sms_consent: 'Customer Agreed to Texts',
+  sms_consent_source: 'Where They Agreed to Texts',
+  text: 'Reply',
+  s: 'Text or Author',
+  min_rating: 'Minimum Rating',
+  max_rating: 'Maximum Rating',
+  start_date: 'Published After',
+  source_drivers: 'Sites',
+  has_company_response: 'Has a Reply',
+  limit: 'Limit',
+  status: 'Status',
+  events: 'Events',
+  company: 'Business Name or ID',
+  url: 'Webhook URL',
+};
+
 /**
  * One call to the Grades.com API v1 with the node's credential; answers the parsed JSON body.
- * RFC 7807 problems become NodeApiError with the API's title and detail.
+ * RFC 7807 problems and connection failures become a NodeApiError whose message says what happened and what to do
+ * next (errors.ts), with a short "Grades.com answered HTTP 403." description (never the raw body or the key).
  */
 export async function gradesRequest(
   this: Context,
@@ -30,13 +64,65 @@ export async function gradesRequest(
     })) as IDataObject | undefined;
     return response ?? {};
   } catch (error) {
-    const err = error as { description?: string; message?: string; response?: { body?: IDataObject }; cause?: unknown };
-    const problem = err.response?.body;
-    const message = problem
-      ? [problem.title, problem.detail].filter((part) => typeof part === 'string' && part !== '').join(': ')
-      : undefined;
-    throw new NodeApiError(this.getNode(), error as never, message ? { message } : {});
+    throw gradesError(this, error, path, String(credentials.apiKey ?? ''));
   }
+}
+
+interface HttpFailure {
+  httpCode?: string | number;
+  response?: { status?: number; statusCode?: number; body?: unknown; data?: unknown; headers?: Record<string, unknown> };
+}
+
+function headerOf(headers: Record<string, unknown> | undefined, name: string): string | undefined {
+  for (const [key, value] of Object.entries(headers ?? {})) {
+    if (key.toLowerCase() === name) {
+      return Array.isArray(value) ? String(value[0]) : String(value);
+    }
+  }
+  return undefined;
+}
+
+/** The NodeApiError for a failed call: our message, the HTTP status, nothing raw. */
+export function gradesError(ctx: Context, error: unknown, url: string, apiKey: string): NodeApiError {
+  const err = error as HttpFailure;
+  const response = err.response;
+  const status = Number(response?.status ?? response?.statusCode ?? err.httpCode ?? 0);
+  if (!status) {
+    const code = String((error as { code?: unknown }).code ?? '');
+    const message = isNetworkError(error) ? networkMessage() : 'Could not reach Grades.com. Try again in a few minutes; if it keeps happening, email support@grades.com.';
+    return new NodeApiError(ctx.getNode(), { message } as never, {
+      message,
+      description: code !== '' ? `No answer from Grades.com (${code}).` : 'No answer from Grades.com.',
+    });
+  }
+  let body = response?.body ?? response?.data;
+  if (typeof body === 'string') {
+    try {
+      body = JSON.parse(body);
+    } catch {
+      body = null;
+    }
+  }
+  const message = problemMessage(
+    status,
+    body,
+    {
+      app: 'n8n',
+      connectUrl: CONNECT_URL,
+      resubscribe: 'Deactivate the workflow and activate it again',
+      url,
+      retryAfter: headerOf(response?.headers, 'retry-after'),
+      apiKey,
+      fieldLabels: FIELD_LABELS,
+    },
+    headerOf(response?.headers, 'www-authenticate'),
+  );
+  // A plain object (not the HTTP error) so NodeApiError can't pick a description or a default text from the raw body.
+  return new NodeApiError(ctx.getNode(), { message, httpCode: String(status) } as never, {
+    message,
+    description: `Grades.com answered HTTP ${status}.`,
+    httpCode: String(status),
+  });
 }
 
 /** `/companies/{company}` with each path value encoded; throws when one is empty. */
@@ -44,7 +130,7 @@ export function path(template: string, values: Record<string, unknown>): string 
   return template.replace(/\{(\w+)\}/g, (_, key: string) => {
     const value = values[key];
     if (value === undefined || value === null || String(value).trim() === '') {
-      throw new Error(`${key} is required`);
+      throw new Error(missingValueMessage(key));
     }
     return encodeURIComponent(String(value).trim());
   });

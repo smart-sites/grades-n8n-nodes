@@ -8,8 +8,8 @@ import type {
   IWebhookFunctions,
   IWebhookResponseData,
 } from 'n8n-workflow';
-import { NodeConnectionTypes } from 'n8n-workflow';
-import { gradesRequest, itemsOf, signatureValid } from '../Grades/transport';
+import { NodeConnectionTypes, NodeOperationError } from 'n8n-workflow';
+import { gradesRequest, itemsOf, NO_BUSINESS, signatureValid } from '../Grades/transport';
 
 /** The Grades.com webhook events (app.grades.com WebhookEvents). */
 export const EVENTS: INodePropertyOptions[] = [
@@ -72,6 +72,9 @@ export class GradesTrigger implements INodeType {
     loadOptions: {
       async getCompanies(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
         const response = await gradesRequest.call(this, 'GET', '/companies');
+        if (((response.data ?? []) as IDataObject[]).length === 0) {
+          throw new NodeOperationError(this.getNode(), NO_BUSINESS);
+        }
         return ((response.data ?? []) as IDataObject[]).map((item) => ({
           name: [item.name, item.location_nickname].filter((part) => part).join(' - '),
           value: String(item.uuid),

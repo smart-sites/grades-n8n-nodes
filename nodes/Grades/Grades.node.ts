@@ -8,7 +8,7 @@ import type {
   INodeTypeDescription,
 } from 'n8n-workflow';
 import { NodeApiError, NodeConnectionTypes, NodeOperationError } from 'n8n-workflow';
-import { compact, gradesRequest, path } from './transport';
+import { compact, gradesRequest, NO_BUSINESS, path } from './transport';
 
 const company = {
   displayName: 'Business Name or ID',
@@ -263,6 +263,9 @@ export class Grades implements INodeType {
     loadOptions: {
       async getCompanies(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
         const response = await gradesRequest.call(this, 'GET', '/companies');
+        if (((response.data ?? []) as IDataObject[]).length === 0) {
+          throw new NodeOperationError(this.getNode(), NO_BUSINESS);
+        }
         return ((response.data ?? []) as IDataObject[]).map((item) => ({
           name: [item.name, item.location_nickname].filter((part) => part).join(' - '),
           value: String(item.uuid),
@@ -352,6 +355,18 @@ async function runOne(this: IExecuteFunctions, i: number): Promise<IDataObject[]
 
   const extra = param('additionalFields', {}) as IDataObject;
   const contact = compact({ name: param('name'), email: param('email'), phone: param('phone'), external_id: extra.external_id });
+  // Checked here: the API's answer is a 400 "Validate Error" that names only one field (F10).
+  if (String(contact.email ?? '').trim() === '' && String(contact.phone ?? '').trim() === '') {
+    throw new NodeOperationError(this.getNode(), 'An email or a phone is required: fill in Email or Phone.', { itemIndex: i });
+  }
+  if (resource === 'contact' && extra.sms_consent) {
+    throw new NodeOperationError(
+      this.getNode(),
+      'Customer Agreed to Texts needs the exact consent wording the customer agreed to, which this node cannot send yet ' +
+        '(Grades.com text messages are not live). Turn Customer Agreed to Texts off and run again.',
+      { itemIndex: i },
+    );
+  }
 
   if (resource === 'reviewRequest') {
     return one(
