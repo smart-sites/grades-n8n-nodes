@@ -151,9 +151,25 @@ export class Grades implements INodeType {
           { displayName: 'Maximum Rating', name: 'max_rating', type: 'number', typeOptions: { minValue: 1, maxValue: 5 }, default: 5 },
           { displayName: 'Minimum Rating', name: 'min_rating', type: 'number', typeOptions: { minValue: 1, maxValue: 5 }, default: 1 },
           { displayName: 'Published After', name: 'start_date', type: 'dateTime', default: '' },
-          { displayName: 'Sites', name: 'source_drivers', type: 'string', default: '', placeholder: 'google,yelp_apify' },
+          {
+            displayName: 'Sites',
+            name: 'source_drivers',
+            type: 'string',
+            default: '',
+            placeholder: 'google,yelp',
+            description: 'Comma-separated review platforms to include, e.g. google, yelp, facebook, bbb, direct, grades',
+          },
           { displayName: 'Text or Author', name: 's', type: 'string', default: '' },
         ],
+      },
+      {
+        displayName: 'Simplify',
+        name: 'simplify',
+        type: 'boolean',
+        default: false,
+        description:
+          'Whether to return a simplified version of the response instead of the raw data: the review platform first (Site Name or Source Name, then Site, e.g. google), without the internal collector ID (Source)',
+        ...show('review', ['get', 'getAll']),
       },
       {
         displayName: 'Limit',
@@ -313,6 +329,7 @@ async function runOne(this: IExecuteFunctions, i: number): Promise<IDataObject[]
   const companyId = resource === 'business' ? '' : (param('company') as string);
   const one = (response: IDataObject): IDataObject[] => [(response.data ?? {}) as IDataObject];
   const many = (response: IDataObject): IDataObject[] => (response.data ?? []) as IDataObject[];
+  const simplifyIf = (reviews: IDataObject[]): IDataObject[] => (param('simplify', false) ? reviews.map(simplifyReview) : reviews);
 
   if (resource === 'business') {
     return many(await gradesRequest.call(this, 'GET', '/companies'));
@@ -321,16 +338,18 @@ async function runOne(this: IExecuteFunctions, i: number): Promise<IDataObject[]
   if (resource === 'review') {
     if (operation === 'getAll') {
       const filters = compact(param('filters', {}) as IDataObject);
-      return many(
-        await gradesRequest.call(this, 'GET', path('/companies/{company}/reviews', { company: companyId }), undefined, {
-          ...filters,
-          limit: param('limit', 50),
-        }),
+      return simplifyIf(
+        many(
+          await gradesRequest.call(this, 'GET', path('/companies/{company}/reviews', { company: companyId }), undefined, {
+            ...filters,
+            limit: param('limit', 50),
+          }),
+        ),
       );
     }
     const reviewPath = path('/companies/{company}/reviews/{review}', { company: companyId, review: param('review') });
     if (operation === 'get') {
-      return one(await gradesRequest.call(this, 'GET', reviewPath));
+      return simplifyIf(one(await gradesRequest.call(this, 'GET', reviewPath)));
     }
     return one(
       await gradesRequest.call(this, 'POST', `${reviewPath}/reply`, {
@@ -393,4 +412,33 @@ async function runOne(this: IExecuteFunctions, i: number): Promise<IDataObject[]
       }),
     ),
   );
+}
+
+/** Simplified review fields, in order. `site` is the review platform (google, yelp, ...). */
+const SIMPLE_REVIEW_FIELDS = [
+  'site_name',
+  'source_name',
+  'site',
+  'uuid',
+  'rating',
+  'author',
+  'text',
+  'published_at',
+  'external_url',
+  'response_text',
+  'response_date',
+];
+
+/**
+ * A review with the platform first (`site_name` when present, `source_name`, `site`) and without `source`, the internal
+ * collector id (e.g. yelp_apify) that may change. The raw output keeps every field, `source` included.
+ */
+export function simplifyReview(review: IDataObject): IDataObject {
+  const out: IDataObject = {};
+  for (const key of SIMPLE_REVIEW_FIELDS) {
+    if (review[key] !== undefined) {
+      out[key] = review[key];
+    }
+  }
+  return out;
 }
