@@ -2,6 +2,21 @@
 
 ## [Unreleased]
 
+## [1.1.0] - prepared, not published (needs the app's "Connect with Grades.com" OAuth for n8n live first)
+
+- **Sign in with Grades.com** (OAuth2): new credential **Grades.com OAuth2 API** (`gradesOAuth2Api`, extends n8n's
+  `oAuth2Api`): dynamic client registration (RFC 7591) as a public client with PKCE S256 against
+  `https://app.grades.com/mcp/oauth`, scopes `companies:read reviews:read reviews:write`, resource
+  `https://app.grades.com/api/v1`; every field is fixed, so the user only clicks "Connect my account". n8n stores the
+  rotated refresh token on each refresh. Needs n8n 2.8 or later.
+- Both nodes get an **Authentication** field: "Grades.com Account (Sign In)" or "API Key" (the existing `gradesApi`
+  credential). Node version 2 (the default for new nodes) defaults to sign-in; version 1, which every workflow saved with
+  1.0.x has, defaults to the API key, so existing workflows run unchanged. The trigger subscribes and removes its webhook
+  with whichever credential is chosen.
+- Errors on a sign-in connection say "reconnect" instead of "create a new key": API 401, a failed refresh
+  (`invalid_grant`, n8n's "needs to be reconnected"), missing scope, a connection limited to some businesses, and the
+  empty Business list.
+
 ## [1.0.1] - 2026-11-12, prepared, not published (npm still has 1.0.0)
 
 - Launch gate L2 / L8 (workspace docs/integration-launch-gate-live-2026-11-09.md, same texts as grades-zapier): a key

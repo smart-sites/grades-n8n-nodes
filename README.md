@@ -21,19 +21,48 @@ have a **Simplify** option: the platform first (`source_name`, `site`) and no `s
 Settings > Community Nodes > Install > `n8n-nodes-grades`. Self-hosted without the UI: `npm install n8n-nodes-grades` in
 `~/.n8n/nodes`, then restart n8n.
 
-Credential **Grades.com API**: an API key from the Grades.com dashboard (Connect your AI > API keys) with
-`reviews:read`, `reviews:write` and `companies:read`. An agency or multi-location key reaches every business it manages:
-each node has a **Business** dropdown.
+Two ways to connect (each node's **Authentication** field):
+
+- **Grades.com Account (Sign In)**, the default for new nodes: credential **Grades.com OAuth2 API**. You sign in to
+  Grades.com and approve n8n; nothing to copy. Needs n8n 2.8 or later.
+- **API Key**: credential **Grades.com API** with a key from the Grades.com dashboard (Connect your AI > API keys) with
+  `reviews:read`, `reviews:write` and `companies:read`. Workflows made with 1.0.x keep using their key unchanged.
+
+An agency or multi-location account reaches every business it manages: each node has a **Business** dropdown.
 
 Plans: the trigger needs Pro or Premium (webhooks); review requests need Premium.
 
 ## Authentication
 
+### Sign in with Grades.com (default)
+
+1. In a Grades.com node, keep **Authentication** on **Grades.com Account (Sign In)** and choose **Create new credential**.
+2. Click **Connect my account**: n8n registers itself with Grades.com, a Grades.com window opens, you sign in and click
+   **Authorize** (all your businesses, or only some).
+3. Done. n8n renews the sign-in on its own. Disconnect at any time in Grades.com > Account > Connected apps.
+
+Grades.com shows the address it will send you back to (your n8n's `/rest/oauth2-credential/callback`): continue only if
+it is your own n8n. What happens underneath: OAuth 2.0 with dynamic client registration (RFC 7591) as a public client,
+PKCE (S256), permissions `companies:read reviews:read reviews:write` (what Grades.com grants n8n), authorization server
+`https://app.grades.com/mcp/oauth`, tokens for `https://app.grades.com/api/v1` (RFC 8707 `resource`, n8n 2.27+). The
+access token lasts an hour; the refresh token rotates on every refresh and n8n stores the new one.
+
+n8n versions: sign-in needs n8n 2.8 or later (dynamic client registration arrived in 1.119, but before 2.8 n8n looks for the
+server metadata only at the root of app.grades.com). On older n8n use an API key.
+
+### API key
+
 1. Open https://my.grades.com/connect?connect=n8n (sign in if asked).
 2. Click **Create key**: the key is named "n8n" and gets `reviews:read`, `reviews:write` and `companies:read`.
-3. In n8n add a credential **Grades.com API** and paste the key (starts with `gk_live_`, shown once).
+3. In the node set **Authentication** to **API Key**, add a credential **Grades.com API** and paste the key (starts
+   with `gk_live_`, shown once).
 
-The credential test calls `GET https://app.grades.com/api/v1/me`. API reference: https://app.grades.com/api/documentation.
+The API key credential test calls `GET https://app.grades.com/api/v1/me`. API reference: https://app.grades.com/api/documentation.
+
+### Node versions
+
+Both nodes are version 2 from 1.1.0. Version 2 defaults to sign-in; nodes saved with 1.0.x are version 1 and default to
+the API key, so existing workflows run unchanged (either version can switch with the Authentication field).
 
 ## Example workflows
 
