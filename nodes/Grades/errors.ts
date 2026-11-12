@@ -20,6 +20,8 @@ export interface ProblemContext {
   retryAfter?: string | null;
   /** The key that was sent, only to say whether it looks like a secret key; never put in a message. */
   apiKey?: string;
+  /** The call used a sign-in (OAuth) connection instead of an API key: the texts say "connection" and "reconnect". */
+  oauth?: boolean;
   /** API field names (`contact.email`, `min_rating`) -> the labels the customer sees. */
   fieldLabels?: Record<string, string>;
 }
@@ -92,6 +94,12 @@ function missingScopes(problem: Record<string, unknown>, detail: string, wwwAuth
 const RESTRICTED_DETAIL = /limited to some (of your )?businesses|only some of your businesses/i;
 
 export function restrictedKeyMessage(ctx: ProblemContext): string {
+  if (ctx.oauth) {
+    return (
+      'This Grades.com connection is limited to some businesses. Triggers need the business named, or reconnect the ' +
+      `Grades.com credential in ${ctx.app} and allow all your businesses.`
+    );
+  }
   return (
     'This key is limited to some businesses. Triggers need the business named, or create a key for all businesses at ' +
     `${ctx.connectUrl}.`
@@ -102,16 +110,20 @@ export function restrictedKeyMessage(ctx: ProblemContext): string {
 function notFound(ctx: ProblemContext): string {
   const path = (ctx.url ?? '').split('?')[0];
   if (/\/webhooks(\/samples)?$/.test(path)) {
+    if (ctx.oauth) {
+      return (
+        'Grades.com could not find this business, or your Grades.com connection cannot reach it (a connection limited to ' +
+        `some businesses reaches only those). Pick the business again from the Business list, or reconnect the Grades.com credential in ${ctx.app} and allow it.`
+      );
+    }
     return (
       'Grades.com could not find this business, or your API key cannot reach it (a key limited to some businesses ' +
       `reaches only those). Pick the business again from the Business list, or create a key for all businesses at ${ctx.connectUrl}.`
     );
   }
   if (/\/webhooks\/(?!samples|events)[^/]+$/.test(path)) {
-    return (
-      'This Grades.com webhook no longer exists (it was deleted in Grades.com, or the API key that made it was removed). ' +
-      `${ctx.resubscribe} to create a new one.`
-    );
+    const maker = ctx.oauth ? 'the connection that made it was disconnected' : 'the API key that made it was removed';
+    return `This Grades.com webhook no longer exists (it was deleted in Grades.com, or ${maker}). ${ctx.resubscribe} to create a new one.`;
   }
   if (/\/agent\/actions\/[^/]+/.test(path)) {
     return (
@@ -130,8 +142,8 @@ function notFound(ctx: ProblemContext): string {
   }
   if (/\/companies\/[^/]+/.test(path)) {
     return (
-      'Grades.com could not find this business, or your API key cannot reach it. Pick the business again from the ' +
-      'Business list (an agency key reaches its client businesses only).'
+      `Grades.com could not find this business, or ${ctx.oauth ? 'your Grades.com connection' : 'your API key'} cannot ` +
+      `reach it. Pick the business again from the Business list (an agency ${ctx.oauth ? 'account' : 'key'} reaches its client businesses only).`
     );
   }
   return 'Grades.com could not find what this step asked for. Check the IDs you mapped into it.';
@@ -147,6 +159,14 @@ export function problemMessage(status: number, body: unknown, ctx: ProblemContex
 
   if ((status === 404 || status === 400) && (code === 'company_required' || RESTRICTED_DETAIL.test(rawDetail))) {
     return restrictedKeyMessage(ctx);
+  }
+
+  if (status === 401 && ctx.oauth) {
+    return (
+      'Grades.com no longer accepts this sign-in: it was disconnected in Grades.com (Account > Connected apps), your ' +
+      `password changed, or it was not used for a long time. Open the Grades.com credential in ${ctx.app} and click ` +
+      'Reconnect to sign in again.'
+    );
   }
 
   if (status === 401) {
@@ -167,6 +187,12 @@ export function problemMessage(status: number, body: unknown, ctx: ProblemContex
     const scopes = missingScopes(problem, rawDetail, wwwAuthenticate);
     if (scopes !== null) {
       const which = scopes === 'needed' ? 'a permission it needs' : `the ${scopes} permission`;
+      if (ctx.oauth) {
+        return (
+          `Your Grades.com connection is not allowed to do this: it is missing ${which}. Reconnect the Grades.com ` +
+          `credential in ${ctx.app} and approve every permission it asks for (${SCOPES_TEXT}).`
+        );
+      }
       // Only a missing write scope is what a read-only key lacks.
       const readOnly = /reviews:write/.test(scopes) ? " (a read-only key can't reply, send requests or start triggers)" : '';
       return (

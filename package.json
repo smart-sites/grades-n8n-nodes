@@ -1,6 +1,6 @@
 {
   "name": "n8n-nodes-grades",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "description": "Grades.com for n8n: reviews, replies, the review agent, review requests and instant triggers.",
   "keywords": [
     "n8n-community-node-package",
@@ -38,7 +38,8 @@
   "n8n": {
     "n8nNodesApiVersion": 1,
     "credentials": [
-      "dist/credentials/GradesApi.credentials.js"
+      "dist/credentials/GradesApi.credentials.js",
+      "dist/credentials/GradesOAuth2Api.credentials.js"
     ],
     "nodes": [
       "dist/nodes/Grades/Grades.node.js",

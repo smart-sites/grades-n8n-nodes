@@ -8,7 +8,7 @@ import type {
   INodeTypeDescription,
 } from 'n8n-workflow';
 import { NodeApiError, NodeConnectionTypes, NodeOperationError } from 'n8n-workflow';
-import { compact, gradesRequest, NO_BUSINESS, path } from './transport';
+import { AUTHENTICATION_PROPERTIES, compact, CREDENTIALS, gradesRequest, noBusinessMessage, path } from './transport';
 
 const company = {
   displayName: 'Business Name or ID',
@@ -33,15 +33,17 @@ export class Grades implements INodeType {
     name: 'grades',
     icon: { light: 'file:grades.svg', dark: 'file:grades.dark.svg' },
     group: ['transform'],
-    version: 1,
+    version: [1, 2],
+    defaultVersion: 2,
     subtitle: '={{$parameter["operation"] + ": " + $parameter["resource"]}}',
     description: 'Reviews, replies, the review agent and review requests on Grades.com',
     defaults: { name: 'Grades.com' },
     inputs: [NodeConnectionTypes.Main],
     outputs: [NodeConnectionTypes.Main],
     usableAsTool: true,
-    credentials: [{ name: 'gradesApi', required: true }],
+    credentials: CREDENTIALS,
     properties: [
+      ...AUTHENTICATION_PROPERTIES,
       {
         displayName: 'Resource',
         name: 'resource',
@@ -280,7 +282,7 @@ export class Grades implements INodeType {
       async getCompanies(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
         const response = await gradesRequest.call(this, 'GET', '/companies');
         if (((response.data ?? []) as IDataObject[]).length === 0) {
-          throw new NodeOperationError(this.getNode(), NO_BUSINESS);
+          throw new NodeOperationError(this.getNode(), noBusinessMessage(this));
         }
         return ((response.data ?? []) as IDataObject[]).map((item) => ({
           name: [item.name, item.location_nickname].filter((part) => part).join(' - '),

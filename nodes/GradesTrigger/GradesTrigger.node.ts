@@ -9,7 +9,7 @@ import type {
   IWebhookResponseData,
 } from 'n8n-workflow';
 import { NodeConnectionTypes, NodeOperationError } from 'n8n-workflow';
-import { gradesRequest, itemsOf, NO_BUSINESS, signatureValid } from '../Grades/transport';
+import { AUTHENTICATION_PROPERTIES, CREDENTIALS, gradesRequest, itemsOf, noBusinessMessage, signatureValid } from '../Grades/transport';
 
 /** The Grades.com webhook events (app.grades.com WebhookEvents). */
 export const EVENTS: INodePropertyOptions[] = [
@@ -38,15 +38,17 @@ export class GradesTrigger implements INodeType {
     name: 'gradesTrigger',
     icon: { light: 'file:grades.svg', dark: 'file:grades.dark.svg' },
     group: ['trigger'],
-    version: 1,
+    version: [1, 2],
+    defaultVersion: 2,
     subtitle: '={{$parameter["events"].join(", ")}}',
     description: 'Starts the workflow when Grades.com finds a review, the review agent drafts a reply, and more',
     defaults: { name: 'Grades.com Trigger' },
     inputs: [],
     outputs: [NodeConnectionTypes.Main],
-    credentials: [{ name: 'gradesApi', required: true }],
+    credentials: CREDENTIALS,
     webhooks: [{ name: 'default', httpMethod: 'POST', responseMode: 'onReceived', path: 'webhook' }],
     properties: [
+      ...AUTHENTICATION_PROPERTIES,
       {
         displayName: 'Business Name or ID',
         name: 'company',
@@ -73,7 +75,7 @@ export class GradesTrigger implements INodeType {
       async getCompanies(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
         const response = await gradesRequest.call(this, 'GET', '/companies');
         if (((response.data ?? []) as IDataObject[]).length === 0) {
-          throw new NodeOperationError(this.getNode(), NO_BUSINESS);
+          throw new NodeOperationError(this.getNode(), noBusinessMessage(this));
         }
         return ((response.data ?? []) as IDataObject[]).map((item) => ({
           name: [item.name, item.location_nickname].filter((part) => part).join(' - '),

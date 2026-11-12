@@ -1,5 +1,14 @@
 import { createHmac, timingSafeEqual } from 'crypto';
-import type { IDataObject, IExecuteFunctions, IHookFunctions, IHttpRequestMethods, ILoadOptionsFunctions, IWebhookFunctions } from 'n8n-workflow';
+import type {
+  IDataObject,
+  IExecuteFunctions,
+  IHookFunctions,
+  IHttpRequestMethods,
+  ILoadOptionsFunctions,
+  INodeCredentialDescription,
+  INodeProperties,
+  IWebhookFunctions,
+} from 'n8n-workflow';
 import { NodeApiError } from 'n8n-workflow';
 import { isNetworkError, missingValueMessage, networkMessage, problemMessage } from './errors';
 
@@ -9,9 +18,75 @@ type Context = IExecuteFunctions | ILoadOptionsFunctions | IHookFunctions | IWeb
 
 export const CONNECT_URL = 'https://my.grades.com/connect?connect=n8n';
 
+/** The two ways to connect: sign in (OAuth2, the default from node version 2) or an API key (the version 1 default). */
+export type Authentication = 'oAuth2' | 'apiKey';
+
+export const CREDENTIAL_TYPES: Record<Authentication, string> = { oAuth2: 'gradesOAuth2Api', apiKey: 'gradesApi' };
+
+/**
+ * The node's "Authentication" choice. Version 1 nodes (workflows made before the sign-in option) resolve to apiKey and
+ * version 2 nodes to oAuth2 (the parameter's default depends on the node version); no parameter at all means apiKey.
+ */
+export function authenticationOf(ctx: Context): Authentication {
+  const value =
+    'getInputData' in ctx
+      ? (ctx as IExecuteFunctions).getNodeParameter('authentication', 0, 'apiKey')
+      : (ctx as ILoadOptionsFunctions).getNodeParameter('authentication', 'apiKey');
+  return value === 'oAuth2' ? 'oAuth2' : 'apiKey';
+}
+
+const AUTHENTICATION_OPTIONS = [
+  {
+    name: 'Grades.com Account (Sign In)',
+    value: 'oAuth2',
+    description: 'Sign in to Grades.com and approve n8n: nothing to copy (n8n 2.8 or later)',
+  },
+  { name: 'API Key', value: 'apiKey', description: 'A gk_live_ key from my.grades.com (Connect your AI > API keys)' },
+];
+
+/**
+ * The "Authentication" parameter of both nodes. Same name twice with a different default per node version (n8n's
+ * versioned-node convention): workflows saved with version 1 keep their API key credential without any change.
+ */
+export const AUTHENTICATION_PROPERTIES: INodeProperties[] = [
+  {
+    displayName: 'Authentication',
+    name: 'authentication',
+    type: 'options',
+    noDataExpression: true,
+    options: AUTHENTICATION_OPTIONS,
+    default: 'oAuth2',
+    displayOptions: { show: { '@version': [2] } },
+  },
+  {
+    displayName: 'Authentication',
+    name: 'authentication',
+    type: 'options',
+    noDataExpression: true,
+    options: AUTHENTICATION_OPTIONS,
+    default: 'apiKey',
+    displayOptions: { show: { '@version': [1] } },
+  },
+];
+
+/** The node's credentials: one per way of connecting, shown by the "Authentication" choice. */
+export const CREDENTIALS: INodeCredentialDescription[] = [
+  { name: 'gradesOAuth2Api', required: true, displayOptions: { show: { authentication: ['oAuth2'] } } },
+  { name: 'gradesApi', required: true, displayOptions: { show: { authentication: ['apiKey'] } } },
+];
+
 export const NO_BUSINESS =
   'Your Grades.com API key does not reach any business yet. Add or claim your business at https://my.grades.com, ' +
   'or use a credential with a key created by a member of the business.';
+
+export const NO_BUSINESS_OAUTH =
+  'The Grades.com account you connected does not reach any business yet (or none was chosen when you connected). Add ' +
+  'or claim your business at https://my.grades.com, or reconnect the Grades.com credential and choose your businesses.';
+
+/** The empty-business-list message for the node's way of connecting. */
+export function noBusinessMessage(ctx: Context): string {
+  return authenticationOf(ctx) === 'oAuth2' ? NO_BUSINESS_OAUTH : NO_BUSINESS;
+}
 
 /** API field names -> the n8n parameter names the customer sees, for 400 field errors. */
 export const FIELD_LABELS: Record<string, string> = {
@@ -51,10 +126,13 @@ export async function gradesRequest(
   body?: IDataObject,
   qs?: IDataObject,
 ): Promise<IDataObject> {
-  const credentials = await this.getCredentials('gradesApi');
+  const authentication = authenticationOf(this);
+  const credentialType = CREDENTIAL_TYPES[authentication];
+  // The sign-in credential has no API URL field (its tokens are for the production API) and no key to inspect.
+  const credentials = authentication === 'apiKey' ? await this.getCredentials(credentialType) : {};
   const baseURL = String(credentials.baseUrl || DEFAULT_BASE_URL).replace(/\/+$/, '');
   try {
-    const response = (await this.helpers.httpRequestWithAuthentication.call(this, 'gradesApi', {
+    const response = (await this.helpers.httpRequestWithAuthentication.call(this, credentialType, {
       method,
       baseURL,
       url: path,
@@ -64,7 +142,9 @@ export async function gradesRequest(
     })) as IDataObject | undefined;
     return response ?? {};
   } catch (error) {
-    throw gradesError(this, error, path, String(credentials.apiKey ?? ''));
+    throw authentication === 'oAuth2'
+      ? gradesError(this, error, path, undefined, true)
+      : gradesError(this, error, path, String(credentials.apiKey ?? ''));
   }
 }
 
@@ -82,11 +162,41 @@ function headerOf(headers: Record<string, unknown> | undefined, name: string): s
   return undefined;
 }
 
+/**
+ * n8n could not refresh the sign-in (the grant was revoked or expired: `invalid_grant`), or the credential was never
+ * connected. n8n raises these itself, without an HTTP status of the API call; the text is in the error or its causes.
+ */
+export function needsReconnect(error: unknown): boolean {
+  let current: unknown = error;
+  for (let depth = 0; depth < 5 && current; depth++) {
+    const e = current as { message?: unknown; description?: unknown; body?: { error?: unknown }; cause?: unknown; failure?: { cause?: unknown } };
+    const text = `${String(e.message ?? '')} ${String(e.description ?? '')}`;
+    if (
+      e.body?.error === 'invalid_grant' ||
+      e.failure?.cause === 'credential-invalid' ||
+      /needs to be reconnected|invalid_grant|no refresh token|credentials? (are |is )?not connected|reconnect (it|the credential)/i.test(text)
+    ) {
+      return true;
+    }
+    current = e.cause;
+  }
+  return false;
+}
+
+/** What to do when the Grades.com sign-in no longer works (the same text as an API 401 on a sign-in connection). */
+export function reconnectMessage(): string {
+  return problemMessage(401, null, { app: 'n8n', connectUrl: CONNECT_URL, resubscribe: '', oauth: true });
+}
+
 /** The NodeApiError for a failed call: our message, the HTTP status, nothing raw. */
-export function gradesError(ctx: Context, error: unknown, url: string, apiKey: string): NodeApiError {
+export function gradesError(ctx: Context, error: unknown, url: string, apiKey: string | undefined, oauth = false): NodeApiError {
   const err = error as HttpFailure;
   const response = err.response;
   const status = Number(response?.status ?? response?.statusCode ?? err.httpCode ?? 0);
+  if (!status && oauth && needsReconnect(error)) {
+    const message = reconnectMessage();
+    return new NodeApiError(ctx.getNode(), { message } as never, { message, description: 'Grades.com sign-in needs renewing.' });
+  }
   if (!status) {
     const code = String((error as { code?: unknown }).code ?? '');
     const message = isNetworkError(error) ? networkMessage() : 'Could not reach Grades.com. Try again in a few minutes; if it keeps happening, email support@grades.com.';
@@ -113,6 +223,7 @@ export function gradesError(ctx: Context, error: unknown, url: string, apiKey: s
       url,
       retryAfter: headerOf(response?.headers, 'retry-after'),
       apiKey,
+      oauth,
       fieldLabels: FIELD_LABELS,
     },
     headerOf(response?.headers, 'www-authenticate'),
