@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [1.0.1] - 2026-11-12, prepared, not published (npm still has 1.0.0)
+
 - Launch gate L2 / L8 (workspace docs/integration-launch-gate-live-2026-11-09.md, same texts as grades-zapier): a key
   limited to some businesses refused on webhooks (the app's 404 "... only some of your businesses ..." or its new 400
   `company_required`) now reads "This key is limited to some businesses. Triggers need the business named, or create a
@@ -20,8 +22,6 @@
 - Contact > Create or Update and Review Request > Send refuse a contact without email and phone before calling the API
   (F10 of the 2026-11-08 test), and "Customer Agreed to Texts" says why it can't be sent yet (the API needs the exact
   consent wording, `sms_consent_text`, so it always failed with a 400). Not published.
-
-## [1.0.1] - staged, not published
 
 - Reviews (app v3.65.0 field meanings): `site` is the review platform (google, yelp, facebook, bbb, direct, grades),
   `source_name` its display name, `source` an internal collector id that may change. The **Sites** filter placeholder is
