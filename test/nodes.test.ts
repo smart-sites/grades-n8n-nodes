@@ -112,6 +112,10 @@ describe('Grades.com node', () => {
 
     // A row that carries site_name (review-request reviews, archive rows) leads with it.
     expect(Object.keys(simplifyReview({ ...REVIEW, site_name: 'Yelp' })).slice(0, 3)).toEqual(['site_name', 'source_name', 'site']);
+    const yelp = simplifyReview({ ...REVIEW, site: 'yelp', text: null, text_policy: 'aggregate', text_hint: 'send yelp_consent=true', text_notice: 'Yelp does not allow its review text here. Open the review on Yelp to read it.' });
+    expect(yelp.text_notice).toBe('Yelp does not allow its review text here. Open the review on Yelp to read it.');
+    expect(yelp.text_hint).toBeUndefined();
+    expect(JSON.stringify(yelp)).not.toContain('yelp_consent');
   });
 
   it('replies to a review', async () => {
