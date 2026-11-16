@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [1.1.1] - 2026-11-16, prepared, not published
+
+- Review > Get / Get Many with **Simplify**: keeps `text_notice`, the plain sentence a Yelp review carries instead of its
+  text ("Yelp does not allow its review text here. Open the review on Yelp to read it."; app.grades.com API field,
+  2026-11-16). The developer `text_hint` stays in the raw output only. Found in the Excel add-in production test.
+
 ## [1.1.0] - prepared, not published (needs the app's "Connect with Grades.com" OAuth for n8n live first)
 
 - **Sign in with Grades.com** (OAuth2): new credential **Grades.com OAuth2 API** (`gradesOAuth2Api`, extends n8n's

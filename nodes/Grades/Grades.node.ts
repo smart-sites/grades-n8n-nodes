@@ -170,7 +170,7 @@ export class Grades implements INodeType {
         type: 'boolean',
         default: false,
         description:
-          'Whether to return a simplified version of the response instead of the raw data: the review platform first (Site Name or Source Name, then Site, e.g. google), without the internal collector ID (Source)',
+          'Whether to return a simplified version of the response instead of the raw data: the review platform first (Site Name or Source Name, then Site, e.g. google), without the internal collector ID (Source); a Yelp review has no Text but a Text Notice to show instead',
         ...show('review', ['get', 'getAll']),
       },
       {
@@ -425,6 +425,9 @@ const SIMPLE_REVIEW_FIELDS = [
   'rating',
   'author',
   'text',
+  // A Yelp review: `text` is empty (Grades.com never sends it) and `text_notice` is the plain sentence for people;
+  // the developer `text_hint` stays in the raw output only (Excel production test 2026-11-16).
+  'text_notice',
   'published_at',
   'external_url',
   'response_text',
